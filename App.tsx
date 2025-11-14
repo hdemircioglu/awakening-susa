@@ -1,8 +1,29 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { StorySegment, PathType, StoryChoice } from './types';
-import { generateStorySegment } from './services/geminiService';
+import { 
+    generateStorySegment,
+    generateImage,
+    generateSpeech,
+    generateAnimation,
+    checkAnimationStatus,
+    fetchVideo,
+} from './services/geminiService';
 import StoryDisplay from './components/StoryDisplay';
 import Loader from './components/Loader';
+import { decode } from './utils/audio';
+
+// FIX: Defined a specific type for `aistudio` to resolve conflict with other declarations.
+interface AIStudio {
+  hasSelectedApiKey: () => Promise<boolean>;
+  openSelectKey: () => Promise<void>;
+}
+
+declare global {
+    interface Window {
+      aistudio?: AIStudio;
+    }
+}
 
 const INITIAL_WORLD_SUMMARY = "The world is a blank canvas, poised at a crucial turning point. The future is unwritten.";
 
@@ -13,8 +34,28 @@ const App: React.FC = () => {
   const [currentChoices, setCurrentChoices] = useState<StoryChoice>({ a: '', b: '' });
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const checkKey = async () => {
+        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+            const keySelected = await window.aistudio.hasSelectedApiKey();
+            setHasApiKey(keySelected);
+        } else {
+            setHasApiKey(false); 
+        }
+    };
+    checkKey();
+  }, []);
+  
+  const handleSelectKey = async () => {
+    if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+        await window.aistudio.openSelectKey();
+        setHasApiKey(true);
+    }
+  };
 
   const startGame = useCallback(() => {
     setIsLoading(true);
@@ -23,7 +64,7 @@ const App: React.FC = () => {
     setCurrentWorldSummary(INITIAL_WORLD_SUMMARY);
     generateStorySegment(INITIAL_WORLD_SUMMARY, null, 'utopia')
         .then(response => {
-            setCurrentWorldSummary(response.newWorldSummary);
+            setCurrentWorldSummary(INITIAL_WORLD_SUMMARY);
             setCurrentQuestion(response.newQuestion);
             setCurrentChoices({ a: response.choiceA, b: response.choiceB });
         })
@@ -41,9 +82,9 @@ const App: React.FC = () => {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [storyHistory, isLoading]);
+  }, [storyHistory, isLoading, currentQuestion]);
   
-  const handleChoice = (choice: 'A' | 'B') => {
+  const handleChoice = async (choice: 'A' | 'B') => {
     const fullChoiceText = choice === 'A' ? currentChoices.a : currentChoices.b;
     setIsLoading(true);
     setError(null);
@@ -51,27 +92,78 @@ const App: React.FC = () => {
     const lastPath = storyHistory.length > 0 ? storyHistory[storyHistory.length - 1].path : 'dystopia';
     const pathType: PathType = lastPath === 'utopia' ? 'dystopia' : 'utopia';
 
-    generateStorySegment(currentWorldSummary, fullChoiceText, pathType)
-        .then(response => {
-            const newSegment: StorySegment = {
-                id: `seg-${storyHistory.length}`,
-                result: response.storyResult,
-                question: currentQuestion,
-                choices: currentChoices,
-                path: pathType,
-            };
+    try {
+        const textResponse = await generateStorySegment(currentWorldSummary, fullChoiceText, pathType);
 
-            setStoryHistory(prev => [...prev, newSegment]);
-            setCurrentWorldSummary(response.newWorldSummary);
-            setCurrentQuestion(response.newQuestion);
-            setCurrentChoices({ a: response.choiceA, b: response.choiceB });
-        })
-        .catch(err => {
-            setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-        })
-        .finally(() => {
-            setIsLoading(false);
-        });
+        const newSegment: StorySegment = {
+            id: `seg-${storyHistory.length}`,
+            result: textResponse.storyResult,
+            question: currentQuestion,
+            choices: currentChoices,
+            path: pathType,
+            imagePrompt: textResponse.imageGenerationPrompt,
+            animationDescription: textResponse.animationDescription,
+        };
+        
+        setStoryHistory(prev => [...prev, newSegment]);
+        setCurrentQuestion(textResponse.newQuestion);
+        setCurrentChoices({ a: textResponse.choiceA, b: textResponse.choiceB });
+        setIsLoading(false);
+
+        const [imageBase64, storyAudioBase64] = await Promise.all([
+            generateImage(textResponse.imageGenerationPrompt),
+            generateSpeech(textResponse.speechNarrationStory),
+        ]);
+        
+        const imageUrl = `data:image/jpeg;base64,${imageBase64}`;
+
+        setStoryHistory(prev => prev.map(seg => 
+            seg.id === newSegment.id 
+            ? { ...seg, imageUrl, storyAudioBase64, imageBase64 }
+            : seg
+        ));
+
+    } catch (err) {
+        setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+        setIsLoading(false);
+    }
+  };
+
+  const handleAnimate = async (segmentId: string) => {
+    if (!hasApiKey) {
+        handleSelectKey();
+        return;
+    }
+    const segment = storyHistory.find(s => s.id === segmentId);
+    if (!segment || !segment.imageBase64) return;
+    
+    setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: true, animationError: undefined } : s));
+
+    try {
+        let operation = await generateAnimation(segment.imageBase64, segment.animationDescription);
+        
+        while (!operation.done) {
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            operation = await checkAnimationStatus(operation);
+        }
+
+        if (operation.error) throw new Error(operation.error.message || "Animation failed in processing.");
+        
+        const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
+        if (!videoUri) throw new Error("Animation finished but no video URI was returned.");
+        
+        const videoBlob = await fetchVideo(videoUri);
+        const animationUrl = URL.createObjectURL(videoBlob);
+        
+        setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationUrl } : s));
+
+    } catch (error) {
+        // FIX: Safely handle the error object, which might not be an instance of Error.
+        // This prevents a crash if `error.message` is accessed on a non-object and fixes the type error.
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationError: errorMessage } : s));
+        if (errorMessage.includes("API key not found")) setHasApiKey(false);
+    }
   };
   
   return (
@@ -81,9 +173,18 @@ const App: React.FC = () => {
           Utopia / Dystopia
         </h1>
         <p className="text-slate-400">An AI-powered branching narrative</p>
+        {hasApiKey === false && (
+            <div className="mt-4 p-3 bg-slate-800 rounded-lg border border-slate-700 text-sm">
+                <p className="text-slate-300">Enable video animation by selecting a Google AI Studio API key.</p>
+                <p className="text-slate-400 text-xs mt-1">Video generation is a billable feature. <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="underline hover:text-cyan-400">Learn more</a>.</p>
+                <button onClick={handleSelectKey} className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-sm font-semibold transition-colors">
+                    Select API Key
+                </button>
+            </div>
+        )}
       </header>
 
-      <StoryDisplay history={storyHistory} />
+      <StoryDisplay history={storyHistory} onAnimate={handleAnimate} />
       
       <div className="w-full max-w-3xl mx-auto px-4 mt-8">
         {isLoading && <Loader />}
