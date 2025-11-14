@@ -20,6 +20,17 @@
       .animate-fade-in {
         animation: fade-in 0.5s ease-out forwards;
       }
+      @keyframes glow {
+        0%, 100% {
+          filter: drop-shadow(0 0 2px currentColor);
+        }
+        50% {
+          filter: drop-shadow(0 0 6px currentColor);
+        }
+      }
+      .animate-glow {
+        animation: glow 1.5s ease-in-out infinite;
+      }
     </style>
   <script type="importmap">
 {

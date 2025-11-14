@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { StorySegment, PathType, StoryChoice } from './types';
 import { 
@@ -11,17 +10,15 @@ import {
 } from './services/geminiService';
 import StoryDisplay from './components/StoryDisplay';
 import Loader from './components/Loader';
-import { decode } from './utils/audio';
+import { decode, decodeAudioData } from './utils/audio';
 
-// FIX: Defined a specific type for `aistudio` to resolve conflict with other declarations.
-interface AIStudio {
-  hasSelectedApiKey: () => Promise<boolean>;
-  openSelectKey: () => Promise<void>;
-}
-
+// FIX: To resolve the type conflict for `window.aistudio`, we augment the `AIStudio`
+// interface instead of re-declaring `aistudio` on `Window`. This relies on
+// `window.aistudio` being typed as `AIStudio` in another global declaration.
 declare global {
-    interface Window {
-      aistudio?: AIStudio;
+    interface AIStudio {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
     }
 }
 
@@ -35,8 +32,11 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+  const [activeAudioSegmentId, setActiveAudioSegmentId] = useState<string | null>(null);
   
   const bottomRef = useRef<HTMLDivElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
 
   useEffect(() => {
     const checkKey = async () => {
@@ -56,6 +56,61 @@ const App: React.FC = () => {
         setHasApiKey(true);
     }
   };
+
+  useEffect(() => {
+    // Cleanup audio resources on component unmount
+    return () => {
+      if (sourceRef.current) {
+        sourceRef.current.stop();
+      }
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
+      }
+    };
+  }, []);
+
+  const playAudio = useCallback(async (segmentId: string, base64: string) => {
+    if (!audioContextRef.current) {
+        // FIX: Cast window to `any` to allow access to `webkitAudioContext` for older browsers without a TypeScript error.
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+    }
+    const context = audioContextRef.current;
+
+    if (context.state === 'suspended') {
+      await context.resume();
+    }
+
+    if (sourceRef.current) {
+      sourceRef.current.onended = null;
+      sourceRef.current.stop();
+      sourceRef.current = null;
+    }
+    
+    if (activeAudioSegmentId === segmentId) {
+      setActiveAudioSegmentId(null);
+      return;
+    }
+
+    try {
+      setActiveAudioSegmentId(segmentId);
+      const audioData = decode(base64);
+      const audioBuffer = await decodeAudioData(audioData, context, 24000, 1);
+      const source = context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(context.destination);
+      source.onended = () => {
+        if (activeAudioSegmentId === segmentId) {
+          setActiveAudioSegmentId(null);
+        }
+        sourceRef.current = null;
+      };
+      source.start();
+      sourceRef.current = source;
+    } catch (e) {
+      console.error("Error playing audio:", e);
+      setActiveAudioSegmentId(null);
+    }
+  }, [activeAudioSegmentId]);
 
   const startGame = useCallback(() => {
     setIsLoading(true);
@@ -115,6 +170,9 @@ const App: React.FC = () => {
             generateSpeech(textResponse.speechNarrationStory),
         ]);
         
+        // Auto-play the generated audio
+        playAudio(newSegment.id, storyAudioBase64);
+
         const imageUrl = `data:image/jpeg;base64,${imageBase64}`;
 
         setStoryHistory(prev => prev.map(seg => 
@@ -158,8 +216,8 @@ const App: React.FC = () => {
         setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationUrl } : s));
 
     } catch (error) {
-        // FIX: Safely handle the error object, which might not be an instance of Error.
-        // This prevents a crash if `error.message` is accessed on a non-object and fixes the type error.
+        // FIX: Safely handle the error object, which is of type 'unknown' in a catch block.
+        // This prevents a type error when trying to use the error object directly.
         const errorMessage = error instanceof Error ? error.message : String(error);
         setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationError: errorMessage } : s));
         if (errorMessage.includes("API key not found")) setHasApiKey(false);
@@ -184,7 +242,12 @@ const App: React.FC = () => {
         )}
       </header>
 
-      <StoryDisplay history={storyHistory} onAnimate={handleAnimate} />
+      <StoryDisplay 
+        history={storyHistory} 
+        onAnimate={handleAnimate}
+        playAudio={playAudio}
+        activeAudioSegmentId={activeAudioSegmentId}
+      />
       
       <div className="w-full max-w-3xl mx-auto px-4 mt-8">
         {isLoading && <Loader />}

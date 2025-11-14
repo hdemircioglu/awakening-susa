@@ -1,13 +1,13 @@
-
-import React, { useState, useRef, useEffect } from 'react';
+import React from 'react';
 import type { StorySegment } from '../types';
 import { UtopiaIcon, DystopiaIcon, SpeakerIcon, MovieIcon } from './Icons';
 import Loader from './Loader';
-import { decode, decodeAudioData } from '../utils/audio';
 
 interface StoryDisplayProps {
   history: StorySegment[];
   onAnimate: (segmentId: string) => void;
+  playAudio: (segmentId: string, base64: string) => void;
+  activeAudioSegmentId: string | null;
 }
 
 const pathStyles = {
@@ -23,66 +23,7 @@ const pathStyles = {
   },
 };
 
-const StoryDisplay: React.FC<StoryDisplayProps> = ({ history, onAnimate }) => {
-  const [activeAudioSegmentId, setActiveAudioSegmentId] = useState<string | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
-
-  useEffect(() => {
-    // Cleanup on unmount
-    return () => {
-      if (sourceRef.current) {
-        sourceRef.current.stop();
-      }
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close();
-      }
-    };
-  }, []);
-
-  const playAudio = async (segmentId: string, base64: string) => {
-    // Initialize AudioContext on first user interaction
-    if (!audioContextRef.current) {
-      // FIX: Cast window to `any` to allow access to `webkitAudioContext` for older browsers without a TypeScript error.
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-    }
-    const context = audioContextRef.current;
-
-    // If another audio is playing, or the same audio is re-clicked, stop it.
-    if (sourceRef.current) {
-      sourceRef.current.onended = null;
-      sourceRef.current.stop();
-      sourceRef.current = null;
-    }
-    
-    // If it was a re-click on the playing audio, just stop and return.
-    if (activeAudioSegmentId === segmentId) {
-      setActiveAudioSegmentId(null);
-      return;
-    }
-
-    try {
-      setActiveAudioSegmentId(segmentId);
-      const audioData = decode(base64);
-      const audioBuffer = await decodeAudioData(audioData, context, 24000, 1);
-      const source = context.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(context.destination);
-      source.onended = () => {
-        // Only clear active state if it's the one that just finished
-        if (activeAudioSegmentId === segmentId) {
-          setActiveAudioSegmentId(null);
-        }
-        sourceRef.current = null;
-      };
-      source.start();
-      sourceRef.current = source;
-    } catch (e) {
-      console.error("Error playing audio:", e);
-      setActiveAudioSegmentId(null);
-    }
-  };
-
+const StoryDisplay: React.FC<StoryDisplayProps> = ({ history, onAnimate, playAudio, activeAudioSegmentId }) => {
 
   if (history.length === 0) {
     return null;
@@ -113,7 +54,7 @@ const StoryDisplay: React.FC<StoryDisplayProps> = ({ history, onAnimate }) => {
                   className={`absolute top-4 right-4 p-2 rounded-full ${styles.iconColor} ${isAudioPlaying ? 'bg-slate-600' : ''} hover:bg-slate-700/50 transition-colors`}
                   aria-label={isAudioPlaying ? "Stop narration" : "Play story narration"}
                 >
-                  <SpeakerIcon className="w-5 h-5" />
+                  <SpeakerIcon className={`w-5 h-5 ${isAudioPlaying ? 'animate-glow' : ''}`} />
                 </button>
               )}
             </div>
