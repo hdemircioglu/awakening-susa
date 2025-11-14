@@ -1,14 +1,26 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import type { StorySegment, PathType, StoryChoice, HiddenObjectLocation } from './types';
+import type { StorySegment, PathType, StoryChoice } from './types';
 import { 
     generateStorySegment,
     generateImage,
     generateSpeech,
+    generateAnimation,
+    checkAnimationStatus,
+    fetchVideo,
 } from './services/geminiService';
 import StoryDisplay from './components/StoryDisplay';
 import Loader from './components/Loader';
-import HiddenObjectGame from './components/HiddenObjectGame';
 import { decode, decodeAudioData } from './utils/audio';
+
+// FIX: To resolve the type conflict for `window.aistudio`, we augment the `AIStudio`
+// interface instead of re-declaring `aistudio` on `Window`. This relies on
+// `window.aistudio` being typed as `AIStudio` in another global declaration.
+declare global {
+    interface AIStudio {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    }
+}
 
 const INITIAL_WORLD_SUMMARY = "The world is a blank canvas, poised at a crucial turning point. The future is unwritten.";
 
@@ -19,13 +31,34 @@ const App: React.FC = () => {
   const [currentChoices, setCurrentChoices] = useState<StoryChoice>({ a: '', b: '' });
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [activeAudioSegmentId, setActiveAudioSegmentId] = useState<string | null>(null);
   
   const bottomRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
-  
+
   useEffect(() => {
+    const checkKey = async () => {
+        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+            const keySelected = await window.aistudio.hasSelectedApiKey();
+            setHasApiKey(keySelected);
+        } else {
+            setHasApiKey(false); 
+        }
+    };
+    checkKey();
+  }, []);
+  
+  const handleSelectKey = async () => {
+    if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+        await window.aistudio.openSelectKey();
+        setHasApiKey(true);
+    }
+  };
+
+  useEffect(() => {
+    // Cleanup audio resources on component unmount
     return () => {
       if (sourceRef.current) {
         sourceRef.current.stop();
@@ -38,6 +71,7 @@ const App: React.FC = () => {
 
   const playAudio = useCallback(async (segmentId: string, base64: string) => {
     if (!audioContextRef.current) {
+        // FIX: Cast window to `any` to allow access to `webkitAudioContext` for older browsers without a TypeScript error.
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
     }
     const context = audioContextRef.current;
@@ -109,7 +143,6 @@ const App: React.FC = () => {
     const fullChoiceText = choice === 'A' ? currentChoices.a : currentChoices.b;
     setIsLoading(true);
     setError(null);
-    setCurrentQuestion('');
 
     const lastPath = storyHistory.length > 0 ? storyHistory[storyHistory.length - 1].path : 'dystopia';
     const pathType: PathType = lastPath === 'utopia' ? 'dystopia' : 'utopia';
@@ -124,31 +157,29 @@ const App: React.FC = () => {
             choices: currentChoices,
             path: pathType,
             imagePrompt: textResponse.imageGenerationPrompt,
-            hiddenObjectName: textResponse.hiddenObjectName,
-            hiddenObjectLocation: textResponse.hiddenObjectLocation,
-            isObjectFound: false,
-            nextQuestion: textResponse.newQuestion,
-            nextChoices: { a: textResponse.choiceA, b: textResponse.choiceB },
+            animationDescription: textResponse.animationDescription,
+            isPuzzleComplete: false,
         };
         
         setStoryHistory(prev => [...prev, newSegment]);
-        
+        setCurrentQuestion(textResponse.newQuestion);
+        setCurrentChoices({ a: textResponse.choiceA, b: textResponse.choiceB });
+        setIsLoading(false);
+
         const [imageBase64, storyAudioBase64] = await Promise.all([
             generateImage(textResponse.imageGenerationPrompt),
             generateSpeech(textResponse.speechNarrationStory),
         ]);
         
+        playAudio(newSegment.id, storyAudioBase64);
+
         const imageUrl = `data:image/jpeg;base64,${imageBase64}`;
 
         setStoryHistory(prev => prev.map(seg => 
             seg.id === newSegment.id 
-            ? { ...seg, imageUrl, storyAudioBase64 }
+            ? { ...seg, imageUrl, storyAudioBase64, imageBase64 }
             : seg
         ));
-        
-        setIsLoading(false);
-        
-        playAudio(newSegment.id, storyAudioBase64);
 
     } catch (err) {
         setError(err instanceof Error ? err.message : 'An unknown error occurred.');
@@ -156,68 +187,75 @@ const App: React.FC = () => {
     }
   };
   
-  const handleFindAttempt = (segmentId: string, location: HiddenObjectLocation) => {
-    const segmentIndex = storyHistory.findIndex(s => s.id === segmentId);
-    const segment = storyHistory[segmentIndex];
-
-    if (!segment || segment.isObjectFound) return;
-
-    if (location === segment.hiddenObjectLocation) {
-      const newHistory = storyHistory.map(s => 
-        s.id === segmentId ? { ...s, isObjectFound: true } : s
-      );
-      setStoryHistory(newHistory);
-
-      // If the found object is in the latest story segment, reveal the next question.
-      if (segmentIndex === newHistory.length - 1) {
-        const updatedSegment = newHistory[segmentIndex];
-        // A short delay to let the user appreciate finding the object.
-        setTimeout(() => {
-          setCurrentQuestion(updatedSegment.nextQuestion);
-          setCurrentChoices(updatedSegment.nextChoices);
-        }, 1500);
-      }
-    }
-  };
-
-  const renderHiddenObjectGame = (segment: StorySegment) => {
-    if (!segment.hiddenObjectName || !segment.imageUrl) {
-      return null;
-    }
-    
-    if (segment.isObjectFound) {
-      return (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/50 animate-fade-in">
-          <div className="text-center p-4 bg-green-900/80 border-2 border-green-500 rounded-lg shadow-2xl">
-            <p className="text-green-200 text-lg font-bold">Object Found!</p>
-            <p className="text-green-300">{segment.hiddenObjectName}</p>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <HiddenObjectGame
-        objectName={segment.hiddenObjectName}
-        onAttempt={(location) => handleFindAttempt(segment.id, location)}
-      />
+  const handlePuzzleComplete = (segmentId: string) => {
+    setStoryHistory(prev =>
+      prev.map(seg =>
+        seg.id === segmentId ? { ...seg, isPuzzleComplete: true } : seg
+      )
     );
   };
+
+  const handleAnimate = async (segmentId: string) => {
+    if (!hasApiKey) {
+        handleSelectKey();
+        return;
+    }
+    const segment = storyHistory.find(s => s.id === segmentId);
+    if (!segment || !segment.imageBase64) return;
+    
+    setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: true, animationError: undefined } : s));
+
+    try {
+        let operation = await generateAnimation(segment.imageBase64, segment.animationDescription);
+        
+        while (!operation.done) {
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            operation = await checkAnimationStatus(operation);
+        }
+
+        if (operation.error) throw new Error(operation.error.message || "Animation failed in processing.");
+        
+        const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
+        if (!videoUri) throw new Error("Animation finished but no video URI was returned.");
+        
+        const videoBlob = await fetchVideo(videoUri);
+        const animationUrl = URL.createObjectURL(videoBlob);
+        
+        setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationUrl } : s));
+
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationError: errorMessage } : s));
+        if (errorMessage.includes("API key not found")) setHasApiKey(false);
+    }
+  };
   
+  const isPuzzlePending = storyHistory.length > 0 && !storyHistory[storyHistory.length - 1].isPuzzleComplete && !!storyHistory[storyHistory.length - 1].imageUrl;
+
   return (
     <main className="min-h-screen flex flex-col items-center p-4 md:p-8 font-sans">
       <header className="text-center mb-8 w-full max-w-3xl">
         <h1 className="text-4xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-red-500 mb-2">
           Utopia / Dystopia
         </h1>
-        <p className="text-slate-400">A hidden object branching narrative</p>
+        <p className="text-slate-400">An AI-powered branching narrative</p>
+        {hasApiKey === false && (
+            <div className="mt-4 p-3 bg-slate-800 rounded-lg border border-slate-700 text-sm">
+                <p className="text-slate-300">Enable video animation by selecting a Google AI Studio API key.</p>
+                <p className="text-slate-400 text-xs mt-1">Video generation is a billable feature. <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="underline hover:text-cyan-400">Learn more</a>.</p>
+                <button onClick={handleSelectKey} className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-sm font-semibold transition-colors">
+                    Select API Key
+                </button>
+            </div>
+        )}
       </header>
 
       <StoryDisplay 
         history={storyHistory} 
+        onAnimate={handleAnimate}
         playAudio={playAudio}
         activeAudioSegmentId={activeAudioSegmentId}
-        renderHiddenObjectGame={renderHiddenObjectGame}
+        onPuzzleComplete={handlePuzzleComplete}
       />
       
       <div className="w-full max-w-3xl mx-auto px-4 mt-8">
@@ -236,7 +274,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {!isLoading && !error && currentQuestion && (
+        {!isLoading && !error && currentQuestion && !isPuzzlePending && (
           <div className="text-center p-6 bg-slate-800/50 rounded-lg border border-slate-700 animate-fade-in">
             <p className="text-xl text-slate-300 italic mb-6">{currentQuestion}</p>
             <div className="flex flex-col md:flex-row gap-4 justify-center">
@@ -244,6 +282,13 @@ const App: React.FC = () => {
               <ChoiceButton choice="B" text={currentChoices.b} onClick={handleChoice} />
             </div>
           </div>
+        )}
+
+        {isPuzzlePending && (
+            <div className="text-center p-6 bg-slate-800/50 rounded-lg border border-slate-700 animate-fade-in">
+                <p className="text-xl text-slate-300 italic mb-4">A new scene has formed.</p>
+                <p className="text-slate-400">Complete the puzzle above to discover what happens next.</p>
+            </div>
         )}
       </div>
 

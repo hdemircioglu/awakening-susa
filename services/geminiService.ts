@@ -1,5 +1,6 @@
+
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import type { PathType, GeminiStoryResponse, HiddenObjectLocation } from '../types';
+import type { PathType, GeminiStoryResponse } from '../types';
 
 const responseSchema = {
   type: Type.OBJECT,
@@ -22,18 +23,14 @@ const responseSchema = {
       type: Type.STRING,
       description: "A short, spoken confirmation of the player's choice (e.g., 'You chose to...').",
     },
-    baseImageGenerationPrompt: {
+    imageGenerationPrompt: {
       type: Type.STRING,
-      description: "A rich, detailed prompt for text-to-image generation that describes the overall scene, but EXCLUDES the hidden object.",
+      description: "A rich, detailed prompt for text-to-image generation, including environment, lighting, mood, and a semi-realistic, atmospheric style.",
     },
-    hiddenObjectName: {
+    animationDescription: {
       type: Type.STRING,
-      description: "The name of a single, small, thematically relevant object to hide in the scene."
+      description: "A 3-6 second cinematic animation description based on the image, including camera movement and atmospheric effects.",
     },
-    hiddenObjectLocation: {
-        type: Type.STRING,
-        description: "The location to hide the object. MUST be one of: 'top-left', 'top-center', 'top-right', 'middle-left', 'middle-center', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'."
-    }
   },
   required: [
     "storyResult",
@@ -42,9 +39,8 @@ const responseSchema = {
     "choiceB",
     "speechNarrationStory",
     "speechNarrationAnswer",
-    "baseImageGenerationPrompt",
-    "hiddenObjectName",
-    "hiddenObjectLocation",
+    "imageGenerationPrompt",
+    "animationDescription",
   ],
 };
 
@@ -60,19 +56,18 @@ export const generateStorySegment = async (
 **Assigned Path:** ${pathType.toUpperCase()}
 
 Generate ALL of the following outputs in a JSON object:
-1.  **storyResult:** 2-4 sentences describing the outcome. Tone must match the path.
+1.  **storyResult:** 2-4 sentences describing the outcome. Tone must match the path. Include vivid sensory details for image generation.
 2.  **newQuestion:** A new, tension-building question for the player.
 3.  **choiceA & choiceB:** Two distinct choices for the new question.
 4.  **speechNarrationStory:** The storyResult, adapted for natural, emotional text-to-speech.
-5.  **speechNarrationAnswer:** A short confirmation of the player's choice.
-6.  **Hidden Object:** Invent a single, small, thematically relevant object to hide in the scene.
-7.  **hiddenObjectName:** The name of this object.
-8.  **hiddenObjectLocation:** The location to hide it. Must be one of nine zones: 'top-left', 'top-center', 'top-right', 'middle-left', 'middle-center', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'.
-9.  **baseImageGenerationPrompt:** A detailed prompt for a semi-realistic, atmospheric image. CRITICAL: This prompt must describe the scene only, and must NOT include the hidden object. The object will be added programmatically later.
+5.  **speechNarrationAnswer:** A short confirmation of the player's choice (e.g., "You chose to trust the machines.").
+6.  **imageGenerationPrompt:** A detailed prompt for a semi-realistic, atmospheric image representing the story moment (include environment, light, mood).
+7.  **animationDescription:** A description for a 3-6 second cinematic animation based on the image (camera moves, atmospheric effects).
 `;
 
   try {
     const response = await ai.models.generateContent({
+      // FIX: Use the recommended model name for gemini flash lite.
       model: "gemini-flash-lite-latest",
       contents: prompt,
       config: {
@@ -83,31 +78,7 @@ Generate ALL of the following outputs in a JSON object:
     });
     
     const jsonText = response.text.trim();
-    const parsed = JSON.parse(jsonText);
-
-    const validLocations = ['top-left', 'top-center', 'top-right', 'middle-left', 'middle-center', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'];
-    if (!validLocations.includes(parsed.hiddenObjectLocation)) {
-      console.warn(`Invalid location "${parsed.hiddenObjectLocation}" received, defaulting to "middle-center".`);
-      parsed.hiddenObjectLocation = 'middle-center';
-    }
-
-    // Programmatically construct the final prompt to ensure accuracy
-    const finalImagePrompt = `${parsed.baseImageGenerationPrompt}. In the ${parsed.hiddenObjectLocation.replace('-', ' ')} area, a small ${parsed.hiddenObjectName} is subtly placed.`;
-
-    // Assemble the response object that matches the app's expected type
-    const result: GeminiStoryResponse = {
-        storyResult: parsed.storyResult,
-        newQuestion: parsed.newQuestion,
-        choiceA: parsed.choiceA,
-        choiceB: parsed.choiceB,
-        speechNarrationStory: parsed.speechNarrationStory,
-        speechNarrationAnswer: parsed.speechNarrationAnswer,
-        imageGenerationPrompt: finalImagePrompt,
-        hiddenObjectName: parsed.hiddenObjectName,
-        hiddenObjectLocation: parsed.hiddenObjectLocation,
-    };
-    
-    return result;
+    return JSON.parse(jsonText) as GeminiStoryResponse;
   } catch (error) {
     console.error("Error generating story segment:", error);
     throw new Error("Failed to generate the next part of the story.");
@@ -163,3 +134,43 @@ export const generateImage = async (prompt: string): Promise<string> => {
     throw new Error("Failed to generate scene image.");
   }
 };
+
+
+export const generateAnimation = async (imageBase64: string, prompt: string) => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  try {
+    let operation = await ai.models.generateVideos({
+        model: 'veo-3.1-fast-generate-preview',
+        prompt: prompt,
+        image: {
+            imageBytes: imageBase64,
+            mimeType: 'image/jpeg',
+        },
+        config: {
+            numberOfVideos: 1,
+            resolution: '720p',
+            aspectRatio: '16:9',
+        }
+    });
+    return operation;
+  } catch (error: any) {
+    console.error("Error generating animation:", error);
+    if (error.message.includes("Requested entity was not found")) {
+        throw new Error("API key not found or invalid. Please select a valid API key.");
+    }
+    throw new Error("Failed to start animation generation.");
+  }
+};
+
+export const checkAnimationStatus = async (operation: any) => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  return await ai.operations.getVideosOperation({ operation: operation });
+}
+
+export const fetchVideo = async (uri: string): Promise<Blob> => {
+    const response = await fetch(`${uri}&key=${process.env.API_KEY}`);
+    if (!response.ok) {
+        throw new Error("Failed to fetch video data.");
+    }
+    return response.blob();
+}

@@ -1,13 +1,15 @@
 import React from 'react';
 import type { StorySegment } from '../types';
-import { UtopiaIcon, DystopiaIcon, SpeakerIcon } from './Icons';
+import { UtopiaIcon, DystopiaIcon, SpeakerIcon, MovieIcon } from './Icons';
 import Loader from './Loader';
+import JigsawPuzzle from './JigsawPuzzle';
 
 interface StoryDisplayProps {
   history: StorySegment[];
+  onAnimate: (segmentId: string) => void;
   playAudio: (segmentId: string, base64: string) => void;
   activeAudioSegmentId: string | null;
-  renderHiddenObjectGame: (segment: StorySegment) => React.ReactNode;
+  onPuzzleComplete: (segmentId: string) => void;
 }
 
 const pathStyles = {
@@ -23,7 +25,7 @@ const pathStyles = {
   },
 };
 
-const StoryDisplay: React.FC<StoryDisplayProps> = ({ history, playAudio, activeAudioSegmentId, renderHiddenObjectGame }) => {
+const StoryDisplay: React.FC<StoryDisplayProps> = ({ history, onAnimate, playAudio, activeAudioSegmentId, onPuzzleComplete }) => {
 
   if (history.length === 0) {
     return null;
@@ -31,9 +33,11 @@ const StoryDisplay: React.FC<StoryDisplayProps> = ({ history, playAudio, activeA
 
   return (
     <div className="w-full max-w-3xl mx-auto px-4 py-8 space-y-12">
-      {history.map((segment) => {
+      {history.map((segment, index) => {
         const styles = pathStyles[segment.path];
         const isAudioPlaying = activeAudioSegmentId === segment.id;
+        const isLastSegment = index === history.length - 1;
+        const showPuzzle = isLastSegment && !segment.isPuzzleComplete && !!segment.imageUrl;
 
         return (
           <div key={segment.id} className="animate-fade-in space-y-4">
@@ -59,20 +63,39 @@ const StoryDisplay: React.FC<StoryDisplayProps> = ({ history, playAudio, activeA
               )}
             </div>
 
-            <div className="relative bg-slate-800/50 rounded-lg p-2 md:p-4 border border-slate-700/50">
-                {!segment.imageUrl ? (
-                    <div className="aspect-video flex items-center justify-center bg-slate-900 rounded-md">
+            <div className="bg-slate-800/50 rounded-lg overflow-hidden border border-slate-700/50">
+                {showPuzzle ? (
+                    <JigsawPuzzle imageUrl={segment.imageUrl!} onComplete={() => onPuzzleComplete(segment.id)} />
+                ) : !segment.imageUrl ? (
+                    <div className="aspect-video flex items-center justify-center bg-slate-900">
                         <Loader />
                     </div>
+                ) : segment.animationUrl ? (
+                    <video src={segment.animationUrl} className="w-full aspect-video" controls autoPlay loop />
                 ) : (
-                    <div className="relative aspect-video rounded-md overflow-hidden bg-slate-900">
-                        <div
-                            className="w-full h-full bg-cover bg-center"
-                            style={{ backgroundImage: `url(${segment.imageUrl})` }}
-                            aria-label="Scene image"
-                        >
+                    <div className="relative group">
+                        <img src={segment.imageUrl} alt={segment.imagePrompt} className="w-full aspect-video object-cover" />
+                        <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                           {segment.isAnimating ? (
+                            <>
+                                <div className="w-10 h-10 border-2 border-t-transparent border-white rounded-full animate-spin"></div>
+                                <p className="text-white mt-2 text-sm">Animating scene...</p>
+                            </>
+                           ) : segment.animationError ? (
+                               <div className="text-center p-4">
+                                   <p className="text-red-400 font-bold">Animation Failed</p>
+                                   <p className="text-slate-300 text-sm mt-1">{segment.animationError}</p>
+                               </div>
+                           ) : (
+                            <button
+                                onClick={() => onAnimate(segment.id)}
+                                className="flex items-center gap-2 px-4 py-2 bg-slate-700/80 text-white rounded-full border border-slate-500 hover:bg-slate-600 transition-colors"
+                            >
+                                <MovieIcon className="w-5 h-5" />
+                                Animate Scene
+                            </button>
+                           )}
                         </div>
-                         {renderHiddenObjectGame(segment)}
                     </div>
                 )}
             </div>
