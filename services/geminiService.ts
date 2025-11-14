@@ -22,9 +22,9 @@ const responseSchema = {
       type: Type.STRING,
       description: "A short, spoken confirmation of the player's choice (e.g., 'You chose to...').",
     },
-    imageGenerationPrompt: {
+    baseImageGenerationPrompt: {
       type: Type.STRING,
-      description: "A rich, detailed prompt for text-to-image generation. This prompt MUST include the object from hiddenObjectName at the location specified by hiddenObjectLocation.",
+      description: "A rich, detailed prompt for text-to-image generation that describes the overall scene, but EXCLUDES the hidden object.",
     },
     hiddenObjectName: {
       type: Type.STRING,
@@ -42,7 +42,7 @@ const responseSchema = {
     "choiceB",
     "speechNarrationStory",
     "speechNarrationAnswer",
-    "imageGenerationPrompt",
+    "baseImageGenerationPrompt",
     "hiddenObjectName",
     "hiddenObjectLocation",
   ],
@@ -68,7 +68,7 @@ Generate ALL of the following outputs in a JSON object:
 6.  **Hidden Object:** Invent a single, small, thematically relevant object to hide in the scene.
 7.  **hiddenObjectName:** The name of this object.
 8.  **hiddenObjectLocation:** The location to hide it. Must be one of nine zones: 'top-left', 'top-center', 'top-right', 'middle-left', 'middle-center', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'.
-9.  **imageGenerationPrompt:** A detailed prompt for a semi-realistic, atmospheric image. CRITICAL: This prompt must subtly include the 'hiddenObjectName' at the specified 'hiddenObjectLocation'. For example, if the object is a 'cracked data chip' and location is 'bottom-right', the prompt could contain '...in the bottom-right corner, half-buried in the dust, lies a cracked data chip.'
+9.  **baseImageGenerationPrompt:** A detailed prompt for a semi-realistic, atmospheric image. CRITICAL: This prompt must describe the scene only, and must NOT include the hidden object. The object will be added programmatically later.
 `;
 
   try {
@@ -83,14 +83,31 @@ Generate ALL of the following outputs in a JSON object:
     });
     
     const jsonText = response.text.trim();
-    // A little bit of resilience against the model returning a non-compliant location
     const parsed = JSON.parse(jsonText);
+
     const validLocations = ['top-left', 'top-center', 'top-right', 'middle-left', 'middle-center', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'];
     if (!validLocations.includes(parsed.hiddenObjectLocation)) {
       console.warn(`Invalid location "${parsed.hiddenObjectLocation}" received, defaulting to "middle-center".`);
       parsed.hiddenObjectLocation = 'middle-center';
     }
-    return parsed as GeminiStoryResponse;
+
+    // Programmatically construct the final prompt to ensure accuracy
+    const finalImagePrompt = `${parsed.baseImageGenerationPrompt}. In the ${parsed.hiddenObjectLocation.replace('-', ' ')} area, a small ${parsed.hiddenObjectName} is subtly placed.`;
+
+    // Assemble the response object that matches the app's expected type
+    const result: GeminiStoryResponse = {
+        storyResult: parsed.storyResult,
+        newQuestion: parsed.newQuestion,
+        choiceA: parsed.choiceA,
+        choiceB: parsed.choiceB,
+        speechNarrationStory: parsed.speechNarrationStory,
+        speechNarrationAnswer: parsed.speechNarrationAnswer,
+        imageGenerationPrompt: finalImagePrompt,
+        hiddenObjectName: parsed.hiddenObjectName,
+        hiddenObjectLocation: parsed.hiddenObjectLocation,
+    };
+    
+    return result;
   } catch (error) {
     console.error("Error generating story segment:", error);
     throw new Error("Failed to generate the next part of the story.");
