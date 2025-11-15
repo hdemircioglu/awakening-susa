@@ -1,4 +1,5 @@
-import React from 'react';
+
+import React, { forwardRef, useImperativeHandle, useRef } from 'react';
 import type { StorySegment } from '../types';
 import { UtopiaIcon, DystopiaIcon, SpeakerIcon, MovieIcon } from './Icons';
 import Loader from './Loader';
@@ -10,6 +11,10 @@ interface StoryDisplayProps {
   playAudio: (segmentId: string, base64: string) => void;
   activeAudioSegmentId: string | null;
   onPuzzleComplete: (segmentId: string) => void;
+}
+
+export interface StoryDisplayHandle {
+  stopAllVideos: () => void;
 }
 
 const pathStyles = {
@@ -25,7 +30,21 @@ const pathStyles = {
   },
 };
 
-const StoryDisplay: React.FC<StoryDisplayProps> = ({ history, onAnimate, playAudio, activeAudioSegmentId, onPuzzleComplete }) => {
+const StoryDisplay = forwardRef<StoryDisplayHandle, StoryDisplayProps>(({ history, onAnimate, playAudio, activeAudioSegmentId, onPuzzleComplete }, ref) => {
+  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+
+  useImperativeHandle(ref, () => ({
+    stopAllVideos: () => {
+      // FIX: Explicitly type `videoEl` to resolve a TypeScript error where it was
+      // being inferred as `unknown`.
+      Object.values(videoRefs.current).forEach((videoEl: HTMLVideoElement | null) => {
+        if (videoEl && !videoEl.paused) {
+          videoEl.pause();
+        }
+      });
+    },
+  }));
+
 
   if (history.length === 0) {
     return null;
@@ -71,7 +90,14 @@ const StoryDisplay: React.FC<StoryDisplayProps> = ({ history, onAnimate, playAud
                         <Loader />
                     </div>
                 ) : segment.animationUrl ? (
-                    <video src={segment.animationUrl} className="w-full aspect-video" controls autoPlay loop />
+                    <video 
+                      ref={el => { videoRefs.current[segment.id] = el; }}
+                      src={segment.animationUrl} 
+                      className="w-full aspect-video" 
+                      controls 
+                      autoPlay 
+                      loop 
+                    />
                 ) : isLastSegment ? (
                     // Last segment, post-puzzle, waiting for video
                     <div className="aspect-video flex items-center justify-center bg-slate-900 relative">
@@ -128,6 +154,6 @@ const StoryDisplay: React.FC<StoryDisplayProps> = ({ history, onAnimate, playAud
       })}
     </div>
   );
-};
+});
 
 export default StoryDisplay;

@@ -8,7 +8,7 @@ import {
     checkAnimationStatus,
     fetchVideo,
 } from './services/geminiService';
-import StoryDisplay from './components/StoryDisplay';
+import StoryDisplay, { StoryDisplayHandle } from './components/StoryDisplay';
 import Loader from './components/Loader';
 import { decode, decodeAudioData } from './utils/audio';
 
@@ -37,6 +37,7 @@ const App: React.FC = () => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const storyDisplayRef = useRef<StoryDisplayHandle>(null);
 
   useEffect(() => {
     const checkKey = async () => {
@@ -177,6 +178,16 @@ const App: React.FC = () => {
   }, [storyHistory, isLoading, currentQuestion]);
   
   const handleChoice = async (choice: 'A' | 'B') => {
+    storyDisplayRef.current?.stopAllVideos();
+    
+    // Stop any playing audio
+    if (sourceRef.current) {
+      sourceRef.current.onended = null;
+      sourceRef.current.stop();
+      sourceRef.current = null;
+    }
+    setActiveAudioSegmentId(null);
+    
     const fullChoiceText = choice === 'A' ? currentChoices.a : currentChoices.b;
     const previousQuestion = currentQuestion;
     const previousChoices = currentChoices;
@@ -295,6 +306,7 @@ const App: React.FC = () => {
 
       {storyHistory.length > 0 && (
         <StoryDisplay 
+          ref={storyDisplayRef}
           history={storyHistory} 
           onAnimate={handleAnimate}
           playAudio={playAudio}
