@@ -103,22 +103,17 @@ const StoryDisplay = forwardRef<StoryDisplayHandle, StoryDisplayProps>(({ histor
                     <div className="aspect-video flex items-center justify-center bg-slate-900 relative">
                         <img src={segment.imageUrl} alt={segment.imagePrompt} className="w-full aspect-video object-cover opacity-30" />
                         <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
-                            {segment.isAnimating ? (
-                            <>
-                                <div className="w-10 h-10 border-2 border-t-transparent border-white rounded-full animate-spin"></div>
-                                <p className="text-white mt-2 text-sm">Animation in progress...</p>
-                            </>
-                            ) : segment.animationError ? (
-                            <div className="text-center">
-                                <p className="text-red-400 font-bold">Animation Failed</p>
-                                <p className="text-slate-300 text-sm mt-1">{segment.animationError}</p>
-                            </div>
-                            ) : (
-                            <div className="text-center">
-                                <div className="w-10 h-10 border-2 border-t-transparent border-white rounded-full animate-spin"></div>
-                                <p className="text-white mt-2 text-sm">Preparing next scene...</p>
-                            </div>
-                            )}
+                            {segment.animationError ? (
+                               <div className="text-center">
+                                   <p className="text-red-400 font-bold">Animation Failed</p>
+                                   <p className="text-slate-300 text-sm mt-1">{segment.animationError}</p>
+                               </div>
+                           ) : (
+                                <>
+                                    <div className="w-10 h-10 border-2 border-t-transparent border-white rounded-full animate-spin"></div>
+                                    <p className="text-white mt-2 text-sm">Animation in progress...</p>
+                                </>
+                           )}
                         </div>
                     </div>
                 ) : (

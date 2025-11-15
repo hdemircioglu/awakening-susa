@@ -13,16 +13,6 @@ import StoryDisplay, { StoryDisplayHandle } from './components/StoryDisplay';
 import Loader from './components/Loader';
 import { decode, decodeAudioData } from './utils/audio';
 
-// FIX: To resolve the type conflict for `window.aistudio`, we augment the `AIStudio`
-// interface instead of re-declaring `aistudio` on `Window`. This relies on
-// `window.aistudio` being typed as `AIStudio` in another global declaration.
-declare global {
-    interface AIStudio {
-      hasSelectedApiKey: () => Promise<boolean>;
-      openSelectKey: () => Promise<void>;
-    }
-}
-
 const INITIAL_WORLD_SUMMARY = "The world is a blank canvas, poised at a crucial turning point. The future is unwritten.";
 
 const App: React.FC = () => {
@@ -32,32 +22,12 @@ const App: React.FC = () => {
   const [currentChoices, setCurrentChoices] = useState<StoryChoice>({ a: '', b: '' });
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [activeAudioSegmentId, setActiveAudioSegmentId] = useState<string | null>(null);
   
   const bottomRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
   const storyDisplayRef = useRef<StoryDisplayHandle>(null);
-
-  useEffect(() => {
-    const checkKey = async () => {
-        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
-            const keySelected = await window.aistudio.hasSelectedApiKey();
-            setHasApiKey(keySelected);
-        } else {
-            setHasApiKey(false); 
-        }
-    };
-    checkKey();
-  }, []);
-  
-  const handleSelectKey = async () => {
-    if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-        await window.aistudio.openSelectKey();
-        setHasApiKey(true);
-    }
-  };
 
   useEffect(() => {
     // Cleanup audio resources on component unmount
@@ -115,11 +85,6 @@ const App: React.FC = () => {
   }, [activeAudioSegmentId]);
   
   const handleAnimate = useCallback(async (segmentId: string, imageBase64?: string, animationDescription?: string) => {
-    if (!hasApiKey) {
-        handleSelectKey();
-        return;
-    }
-
     // FIX: To prevent stale closures, get necessary data from arguments if available,
     // otherwise look up from the `storyHistory` state. This makes the function
     // work for both new segments (where data is passed directly) and old segments
@@ -165,9 +130,8 @@ const App: React.FC = () => {
             errorMessage = "Animation quota exceeded. Please check your Google AI Studio plan and billing details.";
         }
         setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationError: errorMessage } : s));
-        if (errorMessage.includes("API key not found")) setHasApiKey(false);
     }
-  }, [storyHistory, hasApiKey]);
+  }, [storyHistory]);
 
   const generateAndAttachMedia = useCallback((segment: StorySegment, textResponse: GeminiStoryResponse) => {
     // Generate audio in the background
@@ -318,15 +282,6 @@ const App: React.FC = () => {
           Awakening
         </h1>
         <p className="text-slate-400">Every start of the game, will be a new adventure with new storylines and jigsaw puzzles.</p>
-        {hasApiKey === false && (
-            <div className="mt-4 p-3 bg-slate-800 rounded-lg border border-slate-700 text-sm">
-                <p className="text-slate-300">Enable video animation by selecting a Google AI Studio API key.</p>
-                <p className="text-slate-400 text-xs mt-1">Video generation is a billable feature. <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="underline hover:text-cyan-400">Learn more</a>.</p>
-                <button onClick={handleSelectKey} className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-sm font-semibold transition-colors">
-                    Select API Key
-                </button>
-            </div>
-        )}
       </header>
 
       {storyHistory.length > 0 && (
