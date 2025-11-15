@@ -290,9 +290,9 @@ const App: React.FC = () => {
     <main className="min-h-screen flex flex-col items-center p-4 md:p-8 font-sans">
       <header className="text-center mb-8 w-full max-w-3xl">
         <h1 className="text-4xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-red-500 mb-2">
-          Utopia / Dystopia
+          Awakening
         </h1>
-        <p className="text-slate-400">An AI-powered branching narrative</p>
+        <p className="text-slate-400">Every restart of the game, will be a new adventure.</p>
         {hasApiKey === false && (
             <div className="mt-4 p-3 bg-slate-800 rounded-lg border border-slate-700 text-sm">
                 <p className="text-slate-300">Enable video animation by selecting a Google AI Studio API key.</p>
