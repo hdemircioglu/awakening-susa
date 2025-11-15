@@ -84,7 +84,7 @@ const StoryDisplay = forwardRef<StoryDisplayHandle, StoryDisplayProps>(({ histor
 
             <div className="bg-slate-800/50 rounded-lg overflow-hidden border border-slate-700/50">
                 {showPuzzle ? (
-                    <JigsawPuzzle imageUrl={segment.imageUrl!} onComplete={() => onPuzzleComplete(segment.id)} />
+                    <JigsawPuzzle imageUrl={segment.imageUrl!} onComplete={() => onPuzzleComplete(segment.id)} storyNumber={index + 1} />
                 ) : !segment.imageUrl ? (
                     <div className="aspect-video flex items-center justify-center bg-slate-900">
                         <Loader />

@@ -11,10 +11,10 @@ const responseSchema = {
     },
     newQuestion: {
       type: Type.STRING,
-      description: "A new, thought-provoking question about the world's future.",
+      description: "A new, thought-provoking question about the world's future, under 100 characters.",
     },
-    choiceA: { type: Type.STRING, description: "The first choice (A)." },
-    choiceB: { type: Type.STRING, description: "The second choice (B)." },
+    choiceA: { type: Type.STRING, description: "The first choice (A), under 50 characters." },
+    choiceB: { type: Type.STRING, description: "The second choice (B), under 50 characters." },
     speechNarrationStory: {
       type: Type.STRING,
       description: "The story result, rewritten for natural, emotional text-to-speech narration.",
@@ -57,8 +57,8 @@ export const generateStorySegment = async (
 
 Generate ALL of the following outputs in a JSON object:
 1.  **storyResult:** 2-4 sentences describing the outcome. Tone must match the path. Include vivid sensory details for image generation.
-2.  **newQuestion:** A new, tension-building question for the player.
-3.  **choiceA & choiceB:** Two distinct choices for the new question.
+2.  **newQuestion:** A new, tension-building question for the player. **Maximum 100 characters.**
+3.  **choiceA & choiceB:** Two distinct choices for the new question. **Maximum 50 characters each.**
 4.  **speechNarrationStory:** The storyResult, adapted for natural, emotional text-to-speech.
 5.  **speechNarrationAnswer:** A short confirmation of the player's choice (e.g., "You chose to trust the machines.").
 6.  **imageGenerationPrompt:** A detailed prompt for a semi-realistic, atmospheric image representing the story moment (include environment, light, mood).
@@ -114,24 +114,39 @@ export const generateSpeech = async (textToSpeak: string): Promise<string> => {
 export const generateImage = async (prompt: string): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
+    // FIX: Switched to the priced-tier Imagen model to resolve free-tier quota errors.
     const response = await ai.models.generateImages({
         model: 'imagen-4.0-generate-001',
         prompt: prompt,
         config: {
-            numberOfImages: 1,
-            outputMimeType: 'image/jpeg',
-            aspectRatio: '16:9',
+          numberOfImages: 1,
+          outputMimeType: 'image/jpeg',
+          aspectRatio: '16:9',
         },
     });
 
-    const base64ImageBytes = response.generatedImages[0].image.imageBytes;
+    const base64ImageBytes = response.generatedImages?.[0]?.image?.imageBytes;
     if (!base64ImageBytes) {
-        throw new Error("No image data returned from API.");
+      throw new Error("No image data returned from API.");
     }
+    
     return base64ImageBytes;
-  } catch(error) {
+
+  } catch(error: any) {
     console.error("Error generating image:", error);
-    throw new Error("Failed to generate scene image.");
+    let message = 'Failed to generate scene image.';
+    if (error && error.message) {
+      message = error.message;
+      try {
+        const parsed = JSON.parse(message);
+        if (parsed.error && parsed.error.message) {
+          message = parsed.error.message;
+        }
+      } catch (e) {
+        // Not a JSON string, use the message as is.
+      }
+    }
+    throw new Error(message);
   }
 };
 
@@ -155,10 +170,27 @@ export const generateAnimation = async (imageBase64: string, prompt: string) => 
     return operation;
   } catch (error: any) {
     console.error("Error generating animation:", error);
-    if (error.message.includes("Requested entity was not found")) {
+    // FIX: Parse the complex API error object to extract the meaningful message and re-throw a standard Error.
+    // This ensures downstream error handlers in the UI receive a clean, readable message.
+    let message = 'An unknown error occurred during animation generation.';
+    if (error && error.message) {
+      message = error.message;
+      // API errors are often JSON strings within the message property
+      try {
+        const parsed = JSON.parse(message);
+        if (parsed.error && parsed.error.message) {
+          message = parsed.error.message;
+        }
+      } catch (e) {
+        // Not a JSON string, use the message as is.
+      }
+    }
+
+    if (message.includes("Requested entity was not found")) {
         throw new Error("API key not found or invalid. Please select a valid API key.");
     }
-    throw new Error("Failed to start animation generation.");
+    
+    throw new Error(message);
   }
 };
 

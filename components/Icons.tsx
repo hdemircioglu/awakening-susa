@@ -57,3 +57,20 @@ export const MovieIcon: React.FC<{ className?: string }> = ({ className }) => (
           <line x1="17" y1="7" x2="22" y2="7"></line>
       </svg>
 );
+
+export const LightbulbIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M9 18h6" />
+    <path d="M10 22h4" />
+    <path d="M12 2a7 7 0 0 0-7 7c0 3.04 1.63 5.5 4 6.56V20h6v-4.44c2.37-1.06 4-3.52 4-6.56a7 7 0 0 0-7-7z" />
+  </svg>
+);

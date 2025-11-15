@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { StorySegment, PathType, StoryChoice, GeminiStoryResponse } from './types';
 import { 
@@ -112,6 +113,61 @@ const App: React.FC = () => {
       setActiveAudioSegmentId(null);
     }
   }, [activeAudioSegmentId]);
+  
+  const handleAnimate = useCallback(async (segmentId: string, imageBase64?: string, animationDescription?: string) => {
+    if (!hasApiKey) {
+        handleSelectKey();
+        return;
+    }
+
+    // FIX: To prevent stale closures, get necessary data from arguments if available,
+    // otherwise look up from the `storyHistory` state. This makes the function
+    // work for both new segments (where data is passed directly) and old segments
+    // (where it's looked up from component state).
+    let animDescription = animationDescription;
+    let imgBase64 = imageBase64;
+
+    if (!animDescription || !imgBase64) {
+        const segment = storyHistory.find(s => s.id === segmentId);
+        if (!segment) return;
+        animDescription = animDescription || segment.animationDescription;
+        imgBase64 = imgBase64 || segment.imageBase64;
+    }
+
+    const imageToAnimate = imgBase64;
+    if (!imageToAnimate || !animDescription) return;
+    
+    setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: true, animationError: undefined } : s));
+
+    try {
+        let operation = await generateAnimation(imageToAnimate, animDescription);
+        
+        while (!operation.done) {
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            operation = await checkAnimationStatus(operation);
+        }
+
+        if (operation.error) throw new Error(operation.error.message || "Animation failed in processing.");
+        
+        const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
+        if (!videoUri) throw new Error("Animation finished but no video URI was returned.");
+        
+        const videoBlob = await fetchVideo(videoUri);
+        const animationUrl = URL.createObjectURL(videoBlob);
+        
+        setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationUrl } : s));
+
+    } catch (animationError) {
+        // FIX: The `error` parameter in `catch` was shadowing the component's `error` state.
+        // Renaming it to `animationError` resolves the ambiguity and the resulting type error.
+        let errorMessage = animationError instanceof Error ? animationError.message : String(animationError);
+        if (errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("quota")) {
+            errorMessage = "Animation quota exceeded. Please check your Google AI Studio plan and billing details.";
+        }
+        setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationError: errorMessage } : s));
+        if (errorMessage.includes("API key not found")) setHasApiKey(false);
+    }
+  }, [storyHistory, hasApiKey]);
 
   const generateAndAttachMedia = useCallback((segment: StorySegment, textResponse: GeminiStoryResponse) => {
     // Generate audio in the background
@@ -124,7 +180,7 @@ const App: React.FC = () => {
         ));
     }).catch(err => console.error(`Error generating speech for ${segment.id}:`, err));
 
-    // Generate image in the background, in parallel
+    // Generate image, and then kick off animation generation immediately.
     generateImage(textResponse.imageGenerationPrompt).then(imageBase64 => {
         const imageUrl = `data:image/jpeg;base64,${imageBase64}`;
         setStoryHistory(prev => prev.map(seg => 
@@ -132,8 +188,19 @@ const App: React.FC = () => {
             ? { ...seg, imageUrl, imageBase64 }
             : seg
         ));
-    }).catch(err => console.error(`Error generating image for ${segment.id}:`, err));
-  }, [playAudio]);
+        
+        // FIX: Pass the animation description directly into `handleAnimate`. This
+        // avoids a stale closure issue where the function would not find the newly
+        // created story segment in the `storyHistory` array, causing the animation
+        // process to silently fail and get stuck.
+        handleAnimate(segment.id, imageBase64, textResponse.animationDescription);
+
+    }).catch(err => {
+        console.error(`Error generating image for ${segment.id}:`, err)
+        // FIX: Display image generation errors in the UI.
+        setError(err instanceof Error ? err.message : 'Failed to generate scene image.');
+    });
+  }, [playAudio, handleAnimate]);
 
 
   const startGame = useCallback(async () => {
@@ -238,48 +305,6 @@ const App: React.FC = () => {
       )
     );
   };
-
-  const handleAnimate = useCallback(async (segmentId: string) => {
-    if (!hasApiKey) {
-        handleSelectKey();
-        return;
-    }
-    const segment = storyHistory.find(s => s.id === segmentId);
-    if (!segment || !segment.imageBase64) return;
-    
-    setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: true, animationError: undefined } : s));
-
-    try {
-        let operation = await generateAnimation(segment.imageBase64, segment.animationDescription);
-        
-        while (!operation.done) {
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            operation = await checkAnimationStatus(operation);
-        }
-
-        if (operation.error) throw new Error(operation.error.message || "Animation failed in processing.");
-        
-        const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
-        if (!videoUri) throw new Error("Animation finished but no video URI was returned.");
-        
-        const videoBlob = await fetchVideo(videoUri);
-        const animationUrl = URL.createObjectURL(videoBlob);
-        
-        setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationUrl } : s));
-
-    } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationError: errorMessage } : s));
-        if (errorMessage.includes("API key not found")) setHasApiKey(false);
-    }
-  }, [storyHistory, hasApiKey]);
-  
-  useEffect(() => {
-    const lastSegment = storyHistory.at(-1);
-    if (lastSegment && lastSegment.imageBase64 && !lastSegment.isAnimating && !lastSegment.animationUrl && !lastSegment.animationError) {
-      handleAnimate(lastSegment.id);
-    }
-  }, [storyHistory, handleAnimate]);
 
   const lastSegment = storyHistory.length > 0 ? storyHistory[storyHistory.length - 1] : null;
   const isMediaGenerating = !isLoading && lastSegment && !lastSegment.imageUrl;

@@ -31,6 +31,45 @@
       .animate-glow {
         animation: glow 1.5s ease-in-out infinite;
       }
+      @keyframes piece-place {
+        from {
+          transform: scale(1.2) rotate(5deg);
+          opacity: 0.5;
+        }
+        to {
+          transform: scale(1) rotate(0deg);
+          opacity: 1;
+        }
+      }
+      .animate-piece-place {
+        animation: piece-place 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      }
+      .puzzle-solved::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 70%);
+        opacity: 0;
+        animation: flash-effect 1.5s ease-out;
+        pointer-events: none;
+        border-radius: inherit;
+      }
+      @keyframes flash-effect {
+        0% {
+          opacity: 0;
+          transform: scale(0.5);
+        }
+        50% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 0;
+          transform: scale(1.2);
+        }
+      }
     </style>
   <script type="importmap">
 {
