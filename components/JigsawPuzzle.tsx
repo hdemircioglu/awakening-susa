@@ -16,27 +16,30 @@ interface JigsawPuzzleProps {
   onComplete: () => void;
 }
 
-// Fisher-Yates shuffle
-const shuffleArray = (array: any[]) => {
-  let currentIndex = array.length, randomIndex;
+const shuffleArray = <T,>(array: T[]): T[] => {
+  const newArray = [...array];
+  let currentIndex = newArray.length, randomIndex;
   while (currentIndex !== 0) {
     randomIndex = Math.floor(Math.random() * currentIndex);
     currentIndex--;
-    [array[currentIndex], array[randomIndex]] = [
-      array[randomIndex], array[currentIndex]];
+    [newArray[currentIndex], newArray[randomIndex]] = [
+      newArray[randomIndex], newArray[currentIndex]];
   }
-  return array;
+  return newArray;
 };
 
-
-const JigsawPuzzle: React.FC<JigsawPuzzleProps> = ({ imageUrl, onComplete }) => {
+export function JigsawPuzzle({ imageUrl, onComplete }: JigsawPuzzleProps) {
     const [pieces, setPieces] = useState<PuzzlePiece[]>([]);
     const [shuffledPieces, setShuffledPieces] = useState<PuzzlePiece[]>([]);
     const [placedPieces, setPlacedPieces] = useState<Record<string, PuzzlePiece | null>>({});
     const [isLoading, setIsLoading] = useState(true);
     const draggedPieceRef = useRef<PuzzlePiece | null>(null);
 
-    const unplacedPieces = useMemo(() => shuffledPieces.filter(p => !Object.values(placedPieces).some(placed => placed?.id === p.id)), [shuffledPieces, placedPieces]);
+    const unplacedPieces = useMemo(() => 
+        // FIX: Explicitly type `placed` to resolve a TypeScript error where it was being inferred as `unknown`.
+        shuffledPieces.filter(p => !Object.values(placedPieces).some((placed: PuzzlePiece | null) => placed?.id === p.id)), 
+        [shuffledPieces, placedPieces]
+    );
 
     useEffect(() => {
         const createPieces = async () => {
@@ -81,7 +84,7 @@ const JigsawPuzzle: React.FC<JigsawPuzzleProps> = ({ imageUrl, onComplete }) => 
                     }
                 }
                 setPieces(newPieces);
-                setShuffledPieces(shuffleArray([...newPieces]));
+                setShuffledPieces(shuffleArray(newPieces));
                 
                 const initialPlaced: Record<string, PuzzlePiece | null> = {};
                 for (let i = 0; i < PIECE_COUNT; i++) {
@@ -189,5 +192,3 @@ const JigsawPuzzle: React.FC<JigsawPuzzleProps> = ({ imageUrl, onComplete }) => 
         </div>
     );
 };
-
-export default JigsawPuzzle;

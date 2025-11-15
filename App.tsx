@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import type { StorySegment, PathType, StoryChoice } from './types';
+import type { StorySegment, PathType, StoryChoice, GeminiStoryResponse } from './types';
 import { 
     generateStorySegment,
     generateImage,
@@ -29,7 +29,7 @@ const App: React.FC = () => {
   const [currentWorldSummary, setCurrentWorldSummary] = useState<string>(INITIAL_WORLD_SUMMARY);
   const [currentQuestion, setCurrentQuestion] = useState<string>('');
   const [currentChoices, setCurrentChoices] = useState<StoryChoice>({ a: '', b: '' });
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [activeAudioSegmentId, setActiveAudioSegmentId] = useState<string | null>(null);
@@ -112,28 +112,65 @@ const App: React.FC = () => {
     }
   }, [activeAudioSegmentId]);
 
-  const startGame = useCallback(() => {
+  const generateAndAttachMedia = useCallback((segment: StorySegment, textResponse: GeminiStoryResponse) => {
+    // Generate audio in the background
+    generateSpeech(textResponse.speechNarrationStory).then(storyAudioBase64 => {
+        playAudio(segment.id, storyAudioBase64);
+        setStoryHistory(prev => prev.map(seg => 
+            seg.id === segment.id 
+            ? { ...seg, storyAudioBase64 }
+            : seg
+        ));
+    }).catch(err => console.error(`Error generating speech for ${segment.id}:`, err));
+
+    // Generate image in the background, in parallel
+    generateImage(textResponse.imageGenerationPrompt).then(imageBase64 => {
+        const imageUrl = `data:image/jpeg;base64,${imageBase64}`;
+        setStoryHistory(prev => prev.map(seg => 
+            seg.id === segment.id 
+            ? { ...seg, imageUrl, imageBase64 }
+            : seg
+        ));
+    }).catch(err => console.error(`Error generating image for ${segment.id}:`, err));
+  }, [playAudio]);
+
+
+  const startGame = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     setStoryHistory([]);
     setCurrentWorldSummary(INITIAL_WORLD_SUMMARY);
-    generateStorySegment(INITIAL_WORLD_SUMMARY, null, 'utopia')
-        .then(response => {
-            setCurrentWorldSummary(INITIAL_WORLD_SUMMARY);
-            setCurrentQuestion(response.newQuestion);
-            setCurrentChoices({ a: response.choiceA, b: response.choiceB });
-        })
-        .catch(err => {
-            setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-        })
-        .finally(() => {
-            setIsLoading(false);
-        });
-  }, []);
 
-  useEffect(() => {
-    startGame();
-  }, [startGame]);
+    try {
+        const textResponse = await generateStorySegment(INITIAL_WORLD_SUMMARY, null, 'utopia');
+
+        setCurrentWorldSummary(textResponse.storyResult);
+
+        const introSegment: StorySegment = {
+            id: 'seg-intro',
+            result: textResponse.storyResult,
+            question: "The story begins...",
+            choices: { a: '', b: '' },
+            path: 'utopia',
+            imagePrompt: textResponse.imageGenerationPrompt,
+            animationDescription: textResponse.animationDescription,
+            isPuzzleComplete: false,
+        };
+        
+        setStoryHistory([introSegment]);
+        
+        setCurrentQuestion(textResponse.newQuestion);
+        setCurrentChoices({ a: textResponse.choiceA, b: textResponse.choiceB });
+        setIsLoading(false);
+
+        // Generate media in the background
+        generateAndAttachMedia(introSegment, textResponse);
+
+    } catch (err) {
+        setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+        setIsLoading(false);
+    }
+  }, [generateAndAttachMedia]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -141,8 +178,13 @@ const App: React.FC = () => {
   
   const handleChoice = async (choice: 'A' | 'B') => {
     const fullChoiceText = choice === 'A' ? currentChoices.a : currentChoices.b;
+    const previousQuestion = currentQuestion;
+    const previousChoices = currentChoices;
+
     setIsLoading(true);
     setError(null);
+    setCurrentQuestion('');
+    setCurrentChoices({ a: '', b: ''});
 
     const lastPath = storyHistory.length > 0 ? storyHistory[storyHistory.length - 1].path : 'dystopia';
     const pathType: PathType = lastPath === 'utopia' ? 'dystopia' : 'utopia';
@@ -150,11 +192,13 @@ const App: React.FC = () => {
     try {
         const textResponse = await generateStorySegment(currentWorldSummary, fullChoiceText, pathType);
 
+        setCurrentWorldSummary(prev => `${prev}\n\n${textResponse.storyResult}`);
+
         const newSegment: StorySegment = {
             id: `seg-${storyHistory.length}`,
             result: textResponse.storyResult,
-            question: currentQuestion,
-            choices: currentChoices,
+            question: previousQuestion,
+            choices: previousChoices,
             path: pathType,
             imagePrompt: textResponse.imageGenerationPrompt,
             animationDescription: textResponse.animationDescription,
@@ -162,24 +206,13 @@ const App: React.FC = () => {
         };
         
         setStoryHistory(prev => [...prev, newSegment]);
+        
         setCurrentQuestion(textResponse.newQuestion);
         setCurrentChoices({ a: textResponse.choiceA, b: textResponse.choiceB });
         setIsLoading(false);
 
-        const [imageBase64, storyAudioBase64] = await Promise.all([
-            generateImage(textResponse.imageGenerationPrompt),
-            generateSpeech(textResponse.speechNarrationStory),
-        ]);
-        
-        playAudio(newSegment.id, storyAudioBase64);
-
-        const imageUrl = `data:image/jpeg;base64,${imageBase64}`;
-
-        setStoryHistory(prev => prev.map(seg => 
-            seg.id === newSegment.id 
-            ? { ...seg, imageUrl, storyAudioBase64, imageBase64 }
-            : seg
-        ));
+        // Generate media in the background
+        generateAndAttachMedia(newSegment, textResponse);
 
     } catch (err) {
         setError(err instanceof Error ? err.message : 'An unknown error occurred.');
@@ -195,7 +228,7 @@ const App: React.FC = () => {
     );
   };
 
-  const handleAnimate = async (segmentId: string) => {
+  const handleAnimate = useCallback(async (segmentId: string) => {
     if (!hasApiKey) {
         handleSelectKey();
         return;
@@ -228,9 +261,19 @@ const App: React.FC = () => {
         setStoryHistory(prev => prev.map(s => s.id === segmentId ? { ...s, isAnimating: false, animationError: errorMessage } : s));
         if (errorMessage.includes("API key not found")) setHasApiKey(false);
     }
-  };
+  }, [storyHistory, hasApiKey]);
   
+  useEffect(() => {
+    const lastSegment = storyHistory.at(-1);
+    if (lastSegment && lastSegment.imageBase64 && !lastSegment.isAnimating && !lastSegment.animationUrl && !lastSegment.animationError) {
+      handleAnimate(lastSegment.id);
+    }
+  }, [storyHistory, handleAnimate]);
+
+  const lastSegment = storyHistory.length > 0 ? storyHistory[storyHistory.length - 1] : null;
+  const isMediaGenerating = !isLoading && lastSegment && !lastSegment.imageUrl;
   const isPuzzlePending = storyHistory.length > 0 && !storyHistory[storyHistory.length - 1].isPuzzleComplete && !!storyHistory[storyHistory.length - 1].imageUrl;
+  const showStartScreen = storyHistory.length === 0 && !isLoading && !error;
 
   return (
     <main className="min-h-screen flex flex-col items-center p-4 md:p-8 font-sans">
@@ -250,16 +293,18 @@ const App: React.FC = () => {
         )}
       </header>
 
-      <StoryDisplay 
-        history={storyHistory} 
-        onAnimate={handleAnimate}
-        playAudio={playAudio}
-        activeAudioSegmentId={activeAudioSegmentId}
-        onPuzzleComplete={handlePuzzleComplete}
-      />
+      {storyHistory.length > 0 && (
+        <StoryDisplay 
+          history={storyHistory} 
+          onAnimate={handleAnimate}
+          playAudio={playAudio}
+          activeAudioSegmentId={activeAudioSegmentId}
+          onPuzzleComplete={handlePuzzleComplete}
+        />
+      )}
       
       <div className="w-full max-w-3xl mx-auto px-4 mt-8">
-        {isLoading && <Loader />}
+        {(isLoading || isMediaGenerating) && <Loader />}
         
         {error && (
           <div className="text-center p-6 bg-red-900/50 border border-red-500/50 rounded-lg animate-fade-in">
@@ -274,7 +319,18 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {!isLoading && !error && currentQuestion && !isPuzzlePending && (
+        {showStartScreen && (
+            <div className="text-center">
+                <button
+                    onClick={startGame}
+                    className="px-8 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white rounded-lg text-xl font-bold transition-all shadow-lg hover:shadow-cyan-500/40 transform hover:scale-105"
+                >
+                    Begin the Journey
+                </button>
+            </div>
+        )}
+
+        {!isLoading && !isMediaGenerating && !error && currentQuestion && !isPuzzlePending && (
           <div className="text-center p-6 bg-slate-800/50 rounded-lg border border-slate-700 animate-fade-in">
             <p className="text-xl text-slate-300 italic mb-6">{currentQuestion}</p>
             <div className="flex flex-col md:flex-row gap-4 justify-center">
@@ -284,7 +340,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {isPuzzlePending && (
+        {!isLoading && isPuzzlePending && (
             <div className="text-center p-6 bg-slate-800/50 rounded-lg border border-slate-700 animate-fade-in">
                 <p className="text-xl text-slate-300 italic mb-4">A new scene has formed.</p>
                 <p className="text-slate-400">Complete the puzzle above to discover what happens next.</p>
