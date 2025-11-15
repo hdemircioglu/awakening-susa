@@ -317,7 +317,7 @@ const App: React.FC = () => {
         <h1 className="text-4xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-red-500 mb-2">
           Awakening
         </h1>
-        <p className="text-slate-400">Every restart of the game, will be a new adventure.</p>
+        <p className="text-slate-400">Every start of the game, will be a new adventure with new storylines and jigsaw puzzles.</p>
         {hasApiKey === false && (
             <div className="mt-4 p-3 bg-slate-800 rounded-lg border border-slate-700 text-sm">
                 <p className="text-slate-300">Enable video animation by selecting a Google AI Studio API key.</p>
